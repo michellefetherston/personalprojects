@@ -1,4 +1,3 @@
-# src/fuzzy_grouping.py
 
 from rapidfuzz import process, fuzz
 import pandas as pd
@@ -46,7 +45,7 @@ def build_merchant_mapping(descriptions, threshold=85, scorer=fuzz.token_set_rat
     return mapping
 
 
-def apply_fuzzy_grouping(df: pd.DataFrame, threshold=85) -> pd.DataFrame:
+def apply_fuzzy_grouping(df: pd.DataFrame, threshold=80) -> pd.DataFrame:
     """
     Apply fuzzy grouping to a dataframe with a 'desc_clean' column.
 
@@ -72,7 +71,7 @@ def apply_fuzzy_grouping(df: pd.DataFrame, threshold=85) -> pd.DataFrame:
     return df
 
 
-def simplify_merchant_names(df: pd.DataFrame, max_words=2) -> pd.DataFrame:
+def simplify_merchant_names(df: pd.DataFrame, max_words=3) -> pd.DataFrame:
     """
     Create a simplified merchant label for reporting.
 
