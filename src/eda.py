@@ -24,19 +24,43 @@ def monthly_category_spending(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def average_monthly_spending_by_category(df: pd.DataFrame) -> pd.DataFrame:
+def average_monthly_spending_by_category(df):
     """
-    Average monthly spend by category.
+    Average monthly spend by category including months
+    with zero spending.
     """
-    monthly = monthly_category_spending(df)
 
-    return (
-        monthly.groupby("category")["amount"]
-        .mean()
-        .reset_index(name="avg_monthly_spend")
-        .sort_values("avg_monthly_spend", ascending=False)
+    monthly = (
+        df.groupby(["month", "category"])["amount"]
+        .sum()
+        .reset_index()
     )
 
+    months = sorted(df["month"].unique())
+    categories = sorted(df["category"].unique())
+
+    full_index = pd.MultiIndex.from_product(
+        [months, categories],
+        names=["month", "category"]
+    )
+
+    monthly_complete = (
+        monthly
+        .set_index(["month", "category"])
+        .reindex(full_index, fill_value=0)
+        .reset_index()
+    )
+
+    return (
+        monthly_complete
+        .groupby("category")["amount"]
+        .mean()
+        .reset_index(name="avg_monthly_spend")
+        .sort_values(
+            "avg_monthly_spend",
+            ascending=False
+        )
+    )
 
 def spending_by_merchant(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -61,17 +85,43 @@ def monthly_merchant_spending(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def average_monthly_spending_by_merchant(df: pd.DataFrame) -> pd.DataFrame:
+def average_monthly_spending_by_merchant(df):
     """
-    Average monthly spend by merchant.
+    Average monthly spend by merchant across ALL months
+    in the analysis period, including months with $0 spend.
     """
-    monthly = monthly_merchant_spending(df)
+
+    monthly = (
+        df.groupby(["month", "merchant_clean"])["amount"]
+        .sum()
+        .reset_index()
+    )
+
+    months = sorted(df["month"].unique())
+    merchants = sorted(df["merchant_clean"].unique())
+
+    # Create complete Month × Merchant grid
+    full_index = pd.MultiIndex.from_product(
+        [months, merchants],
+        names=["month", "merchant_clean"]
+    )
+
+    monthly_complete = (
+        monthly
+        .set_index(["month", "merchant_clean"])
+        .reindex(full_index, fill_value=0)
+        .reset_index()
+    )
 
     return (
-        monthly.groupby("merchant_clean")["amount"]
+        monthly_complete
+        .groupby("merchant_clean")["amount"]
         .mean()
         .reset_index(name="avg_monthly_spend")
-        .sort_values("avg_monthly_spend", ascending=False)
+        .sort_values(
+            "avg_monthly_spend",
+            ascending=False
+        )
     )
 
 
