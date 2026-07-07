@@ -133,10 +133,8 @@ def monthly_spending(df):
         .reset_index(name="monthly_spend")
     )
 
-    monthly["month"] = (
-        monthly["month"]
-        .dt.to_timestamp()
-    )
+    if pd.api.types.is_period_dtype(monthly["month"]):
+        monthly["month"] = monthly["month"].dt.to_timestamp()
 
     return monthly
 
