@@ -61,7 +61,7 @@ def clean_description(text: str) -> str:
 
     text = text.upper()
     text = re.sub(r"\d+", "", text)                       # remove numbers
-    text = re.sub(r'(WI|IL|MN|MI|USA|SQ|TST|LLC)', '', text)  # remove select noise tokens
+    text = re.sub(r'(WI|MN|USA|SQ|TST|LLC)', '', text)  # remove select noise tokens
     text = re.sub(r"[^A-Z\s]", "", text)                  # remove special characters
     text = re.sub(r"\s+", " ", text).strip()              # normalize whitespace
 
