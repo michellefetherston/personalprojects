@@ -25,6 +25,24 @@ def standardize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def remove_payments_and_credits(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove payments, credits, and transfers from analysis.
+    """
+    
+    if "category" not in df.columns:
+        return df
+
+    excluded_categories = {
+        "Payments and Credits"
+    }
+
+    df = df[
+        ~df["category"].isin(excluded_categories)
+    ].copy()
+
+    return df
+
 def convert_dates(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert date columns to datetime.
@@ -40,14 +58,30 @@ def convert_dates(df: pd.DataFrame) -> pd.DataFrame:
 
 def clean_amount(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Remove currency symbols and convert amount to float.
+    Convert amount column to numeric.
+    Handles:
+        $123.45
+        -123.45
+        (123.45)
     """
-    if "amount" in df.columns:
-        df["amount"] = (
-            df["amount"]
-            .replace(r"[\$,]", "", regex=True)
-            .astype(float)
-        )
+
+    if "amount" not in df.columns:
+        return df
+
+    amount = (
+        df["amount"]
+        .astype(str)
+        .str.replace("$", "", regex=False)
+        .str.replace(",", "", regex=False)
+        .str.replace("(", "-", regex=False)
+        .str.replace(")", "", regex=False)
+        .str.strip()
+    )
+
+    df["amount"] = pd.to_numeric(
+        amount,
+        errors="coerce"
+    )
 
     return df
 
@@ -96,6 +130,7 @@ def clean_transactions(filepath: str) -> pd.DataFrame:
     """
     df = load_data(filepath)
     df = standardize_column_names(df)
+    df = remove_payments_and_credits(df)
     df = convert_dates(df)
     df = clean_amount(df)
     df = apply_description_cleaning(df)
