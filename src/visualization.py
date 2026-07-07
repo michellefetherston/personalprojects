@@ -99,13 +99,19 @@ def plot_avg_monthly_merchants(avg_merchant_df,
     plt.show()
 
 
-def plot_monthly_spending(monthly_df,
-                          figsize=(12, 6)):
+def plot_monthly_spending(monthly_df, figsize=(12, 6)):
+
+    plot_df = monthly_df.copy()
+
+    plot_df["month"] = (
+        plot_df["month"]
+        .dt.to_timestamp()
+    )
 
     plt.figure(figsize=figsize)
 
     sns.lineplot(
-        data=monthly_df,
+        data=plot_df,
         x="month",
         y="monthly_spend",
         marker="o"

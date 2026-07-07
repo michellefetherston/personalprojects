@@ -125,16 +125,20 @@ def average_monthly_spending_by_merchant(df):
     )
 
 
-def monthly_spending(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Total spending by calendar month.
-    """
-    return (
+def monthly_spending(df):
+
+    monthly = (
         df.groupby("month")["amount"]
         .sum()
         .reset_index(name="monthly_spend")
     )
 
+    monthly["month"] = (
+        monthly["month"]
+        .dt.to_timestamp()
+    )
+
+    return monthly
 
 def average_monthly_spending(df: pd.DataFrame) -> float:
     """
