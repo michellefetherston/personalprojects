@@ -102,7 +102,7 @@ def clean_description(text: str) -> str:
     """
 
     text = str(text).upper()
-
+    text = re.sub(r"\b\d+\b", " ", text)
     text = re.sub(
         r"[^A-Z0-9\s]",
         " ",

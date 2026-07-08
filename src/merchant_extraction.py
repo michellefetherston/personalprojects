@@ -1,42 +1,73 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.feature_extraction.text import (
-    TfidfVectorizer
-)
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-from rapidfuzz import (
-    process,
-    fuzz
-)
+from rapidfuzz import process, fuzz
 
+
+# =====================================================
+# Default Stopwords
+# =====================================================
 
 DEFAULT_STOPWORDS = [
+
+    # processors
     "SQ",
     "TST",
     "PY",
-    "POS",
-    "ONLINE",
-    "STORE",
+    "PAYPAL",
+    "ADYEN",
+
+    # URL artifacts
+    "COM",
+    "WWW",
+    "HTTP",
+    "HTTPS",
+    "US",
+    "EN",
+
+    # corporate terms
     "INC",
     "LLC",
-    "CO",
     "CORP",
-    "THE",
+    "CO",
+
+    # transaction noise
     "PAYMENT",
     "PURCHASE",
     "DEBIT",
     "CREDIT",
     "CHECKCARD",
     "CHECK",
-    "VISA",
-    "MC",
+
+    # generic retail noise
+    "ONLINE",
+    "STORE",
+    "PREMIUM",
+
+    # state abbreviations
     "WI",
     "IL",
+    "IN",
+    "IA",
     "MN",
-    "MI"
+    "MI",
+    "CA",
+    "PA",
+    "NY",
+    "TX",
+    "FL",
+
+    # card types
+    "VISA",
+    "MC"
 ]
 
+
+# =====================================================
+# TF-IDF Vectorizer
+# =====================================================
 
 def create_vectorizer(custom_stopwords=None):
 
@@ -48,34 +79,105 @@ def create_vectorizer(custom_stopwords=None):
     return TfidfVectorizer(
         stop_words=stopwords,
         lowercase=False,
-        token_pattern=r"\b[A-Z0-9]+\b"
+
+        # Must begin with a letter.
+        # Prevents:
+        # 00004911691
+        # 25866091
+        token_pattern=r"\b[A-Z][A-Z0-9]+\b"
     )
 
 
-def extract_top_tfidf_token(
+# =====================================================
+# Extract Highest-Value Tokens
+# =====================================================
+
+def extract_top_tfidf_tokens(
     row,
-    feature_names
+    feature_names,
+    top_n=3,
+    min_length=4
 ):
+    """
+    Return highest-weight TF-IDF tokens.
+    """
 
     arr = row.toarray()[0]
 
     if arr.sum() == 0:
-        return "UNKNOWN"
+        return ["UNKNOWN"]
 
-    idx = np.argmax(arr)
+    indices = np.argsort(arr)[::-1]
 
-    return feature_names[idx]
+    tokens = []
 
+    for idx in indices:
+
+        if arr[idx] <= 0:
+            continue
+
+        token = feature_names[idx]
+
+        if len(token) < min_length:
+            continue
+
+        tokens.append(token)
+
+        if len(tokens) >= top_n:
+            break
+
+    if len(tokens) == 0:
+        return ["UNKNOWN"]
+
+    return tokens
+
+
+# =====================================================
+# Preserve Original Token Order
+# =====================================================
+
+def build_ordered_candidate(
+    description,
+    tokens,
+    max_tokens=2
+):
+    """
+    Build merchant label using
+    original token order from the
+    transaction description.
+
+    Example:
+
+    ACRES | AROMATIC
+    ->
+    AROMATIC ACRES
+    """
+
+    words = description.split()
+
+    matched = []
+
+    for word in words:
+
+        if (
+            word in tokens
+            and word not in matched
+        ):
+            matched.append(word)
+
+    return " ".join(
+        matched[:max_tokens]
+    )
+
+
+# =====================================================
+# Assign Merchant Candidates
+# =====================================================
 
 def assign_merchant_candidates(
-    df: pd.DataFrame,
+    df,
     custom_stopwords=None
-) -> pd.DataFrame:
-    """
-    Use TF-IDF to identify
-    the most distinctive token in
-    each merchant description.
-    """
+):
 
     vectorizer = create_vectorizer(
         custom_stopwords
@@ -92,57 +194,104 @@ def assign_merchant_candidates(
 
     df = df.copy()
 
-    df["merchant_candidate"] = [
-        extract_top_tfidf_token(
+    top_token_output = []
+
+    merchant_candidates = []
+
+    for i in range(X.shape[0]):
+
+        top_tokens = extract_top_tfidf_tokens(
             X[i],
-            feature_names
+            feature_names,
+            top_n=3
         )
-        for i in range(X.shape[0])
-    ]
+
+        candidate = build_ordered_candidate(
+            df.iloc[i]["desc_clean"],
+            top_tokens,
+            max_tokens=2
+        )
+
+        top_token_output.append(
+            " | ".join(top_tokens)
+        )
+
+        merchant_candidates.append(
+            candidate
+            if candidate
+            else "UNKNOWN"
+        )
+
+    df["top_tokens"] = top_token_output
+
+    df["merchant_candidate"] = merchant_candidates
 
     return df
 
 
+# =====================================================
+# Optional Fuzzy Consolidation
+# =====================================================
+
 def merge_candidate_names(
-    df: pd.DataFrame,
-    threshold=90
-) -> pd.DataFrame:
+    df,
+    threshold=92
+):
     """
-    Merge candidate names like:
+    Merge similar merchant names.
+
+    Examples:
 
     WALGREEN
     WALGREENS
 
-    MCDONALD
-    MCDONALDS
+    PANERA
+    PANERA BREAD
+
+    COSTCO
+    COSTCO WHOLESALE
     """
 
-    candidates = sorted(
+    candidates = (
         df["merchant_candidate"]
         .dropna()
         .unique()
     )
 
+    candidates = sorted(candidates)
+
     canonical_names = []
+
     mapping = {}
 
     for candidate in candidates:
 
         if not canonical_names:
-            canonical_names.append(candidate)
+
+            canonical_names.append(
+                candidate
+            )
+
             mapping[candidate] = candidate
+
             continue
 
         match, score, _ = process.extractOne(
             candidate,
             canonical_names,
-            scorer=fuzz.ratio
+            scorer=fuzz.token_sort_ratio
         )
 
         if score >= threshold:
+
             mapping[candidate] = match
+
         else:
-            canonical_names.append(candidate)
+
+            canonical_names.append(
+                candidate
+            )
+
             mapping[candidate] = candidate
 
     df = df.copy()
@@ -155,13 +304,29 @@ def merge_candidate_names(
     return df
 
 
+# =====================================================
+# Main Pipeline
+# =====================================================
+
 def extract_merchants(
-    df: pd.DataFrame,
+    df,
     custom_stopwords=None,
-    fuzzy_threshold=90
-) -> pd.DataFrame:
+    fuzzy_threshold=92
+):
     """
-    Full merchant extraction pipeline.
+    Full merchant extraction workflow.
+
+    Description
+       ↓
+    TF-IDF
+       ↓
+    Top Tokens
+       ↓
+    Ordered Candidate
+       ↓
+    Fuzzy Merge
+       ↓
+    merchant_clean
     """
 
     df = assign_merchant_candidates(
