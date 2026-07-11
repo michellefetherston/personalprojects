@@ -1,342 +1,254 @@
+import re
 import pandas as pd
-import numpy as np
 
-from sklearn.feature_extraction.text import TfidfVectorizer
+###############################################################################
+# LOAD MERCHANT MAP
+###############################################################################
 
-from rapidfuzz import process, fuzz
-
-
-# =====================================================
-# Default Stopwords
-# =====================================================
-
-DEFAULT_STOPWORDS = [
-
-    # processors
-    "SQ",
-    "TST",
-    "PY",
-    "PAYPAL",
-    "ADYEN",
-
-    # URL artifacts
-    "COM",
-    "WWW",
-    "HTTP",
-    "HTTPS",
-    "US",
-    "EN",
-
-    # corporate terms
-    "INC",
-    "LLC",
-    "CORP",
-    "CO",
-
-    # transaction noise
-    "PAYMENT",
-    "PURCHASE",
-    "DEBIT",
-    "CREDIT",
-    "CHECKCARD",
-    "CHECK",
-
-    # generic retail noise
-    "ONLINE",
-    "STORE",
-    "PREMIUM",
-
-    # state abbreviations
-    "WI",
-    "IL",
-    "IN",
-    "IA",
-    "MN",
-    "MI",
-    "CA",
-    "PA",
-    "NY",
-    "TX",
-    "FL",
-
-    # card types
-    "VISA",
-    "MC"
-]
-
-
-# =====================================================
-# TF-IDF Vectorizer
-# =====================================================
-
-def create_vectorizer(custom_stopwords=None):
-
-    stopwords = DEFAULT_STOPWORDS.copy()
-
-    if custom_stopwords:
-        stopwords.extend(custom_stopwords)
-
-    return TfidfVectorizer(
-        stop_words=stopwords,
-        lowercase=False,
-
-        # Must begin with a letter.
-        # Prevents:
-        # 00004911691
-        # 25866091
-        token_pattern=r"\b[A-Z][A-Z0-9]+\b"
-    )
-
-
-# =====================================================
-# Extract Highest-Value Tokens
-# =====================================================
-
-def extract_top_tfidf_tokens(
-    row,
-    feature_names,
-    top_n=3,
-    min_length=4
-):
+def load_merchant_map(csv_path="merchant_map.csv"):
     """
-    Return highest-weight TF-IDF tokens.
+    merchant_map.csv format:
+
+    pattern,merchant_clean
+    AMAZON MKTPL|AMZN MKTP,AMAZON
+    PEACOCKTVLL|PEACOCK.*PREMIUM,PEACOCK
+    ...
+
+    Order matters.
+    More specific patterns should appear first.
     """
 
-    arr = row.toarray()[0]
+    mapping_df = pd.read_csv(csv_path)
 
-    if arr.sum() == 0:
-        return ["UNKNOWN"]
+    merchant_map = []
 
-    indices = np.argsort(arr)[::-1]
-
-    tokens = []
-
-    for idx in indices:
-
-        if arr[idx] <= 0:
-            continue
-
-        token = feature_names[idx]
-
-        if len(token) < min_length:
-            continue
-
-        tokens.append(token)
-
-        if len(tokens) >= top_n:
-            break
-
-    if len(tokens) == 0:
-        return ["UNKNOWN"]
-
-    return tokens
-
-
-# =====================================================
-# Preserve Original Token Order
-# =====================================================
-
-def build_ordered_candidate(
-    description,
-    tokens,
-    max_tokens=2
-):
-    """
-    Build merchant label using
-    original token order from the
-    transaction description.
-
-    Example:
-
-    ACRES | AROMATIC
-    ->
-    AROMATIC ACRES
-    """
-
-    words = description.split()
-
-    matched = []
-
-    for word in words:
-
-        if (
-            word in tokens
-            and word not in matched
-        ):
-            matched.append(word)
-
-    return " ".join(
-        matched[:max_tokens]
-    )
-
-
-# =====================================================
-# Assign Merchant Candidates
-# =====================================================
-
-def assign_merchant_candidates(
-    df,
-    custom_stopwords=None
-):
-
-    vectorizer = create_vectorizer(
-        custom_stopwords
-    )
-
-    X = vectorizer.fit_transform(
-        df["desc_clean"]
-    )
-
-    feature_names = (
-        vectorizer
-        .get_feature_names_out()
-    )
-
-    df = df.copy()
-
-    top_token_output = []
-
-    merchant_candidates = []
-
-    for i in range(X.shape[0]):
-
-        top_tokens = extract_top_tfidf_tokens(
-            X[i],
-            feature_names,
-            top_n=3
-        )
-
-        candidate = build_ordered_candidate(
-            df.iloc[i]["desc_clean"],
-            top_tokens,
-            max_tokens=2
-        )
-
-        top_token_output.append(
-            " | ".join(top_tokens)
-        )
-
-        merchant_candidates.append(
-            candidate
-            if candidate
-            else "UNKNOWN"
-        )
-
-    df["top_tokens"] = top_token_output
-
-    df["merchant_candidate"] = merchant_candidates
-
-    return df
-
-
-# =====================================================
-# Optional Fuzzy Consolidation
-# =====================================================
-
-def merge_candidate_names(
-    df,
-    threshold=92
-):
-    """
-    Merge similar merchant names.
-
-    Examples:
-
-    WALGREEN
-    WALGREENS
-
-    PANERA
-    PANERA BREAD
-
-    COSTCO
-    COSTCO WHOLESALE
-    """
-
-    candidates = (
-        df["merchant_candidate"]
-        .dropna()
-        .unique()
-    )
-
-    candidates = sorted(candidates)
-
-    canonical_names = []
-
-    mapping = {}
-
-    for candidate in candidates:
-
-        if not canonical_names:
-
-            canonical_names.append(
-                candidate
+    for _, row in mapping_df.iterrows():
+        merchant_map.append(
+            (
+                re.compile(str(row["pattern"]), re.IGNORECASE),
+                str(row["merchant_clean"]).strip()
             )
-
-            mapping[candidate] = candidate
-
-            continue
-
-        match, score, _ = process.extractOne(
-            candidate,
-            canonical_names,
-            scorer=fuzz.token_sort_ratio
         )
 
-        if score >= threshold:
+    return merchant_map
 
-            mapping[candidate] = match
 
-        else:
+###############################################################################
+# CLEANUP REGEX
+###############################################################################
 
-            canonical_names.append(
-                candidate
-            )
+PROCESSOR_RE = re.compile(
+    r"""
+    ^
+    (
+        PAYPAL\s+\*|
+        PP\*|
+        PPY\*|
+        PY\s+\*|
+        SP\s+
+        |PX\*
+        |PAW\*
+        |FH\*
+        |RF\s+\*
+        |ACT\*
+        |AT\s+\*
+        |DD\s+\*
+        |EB\s+\*
+        |IN\s+\*
+        |MED\*
+        |OTTER\*
+        |TRYOTTER\*
+        |LGC\*
+        |CUR8\*
+        |ICP\*
+        |SQ\s+\*
+        |TST\*
+        |VCO\*
+        |NIC\*
+        |FEVOINC\*
+        |DIRECTSUPP\*
+        |BCS\*
+        |GLOSS\*
+        |PTI\*
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
-            mapping[candidate] = candidate
+APPLE_PAY_RE = re.compile(
+    r"APPLE PAY ENDING IN \d{4}",
+    re.IGNORECASE
+)
 
-    df = df.copy()
+PHONE_RE = re.compile(
+    r"\b(?:\d{3}[- ]?\d{3}[- ]?\d{4}|\d{10})\b"
+)
+
+STORE_NUMBER_RE = re.compile(
+    r"(?:#\d+|\bF\d+\b)"
+)
+
+LONG_ID_RE = re.compile(
+    r"""
+    \b[A-Z0-9]{8,}\b
+    |
+    \b\d{6,}\b
+    """,
+    re.VERBOSE
+)
+
+STATE_RE = re.compile(
+    r"\b(?:WI|IL|MN|CA|TX|PA|FL|CO|VA|OH|NC|NY|DC|GA|SC|IN|UT|WA|MI|NJ|DE|MD|KS|IA|TN)\b"
+)
+
+CITY_RE = re.compile(
+    r"""
+    \b(
+        WAUWATOSA|
+        MILWAUKEE|
+        BROOKFIELD|
+        MEQUON|
+        GLENDALE|
+        GREENFIELD|
+        WEST\ ALLIS|
+        MENOMONEE\ FALLS|
+        MENOMONEE|
+        STURGEON\ BAY|
+        FISH\ CREEK|
+        SISTER\ BAY|
+        EGG\ HARBOR|
+        ELLISON\ BAY|
+        BAILEYS\ HARBOR|
+        GERMANTOWN|
+        WAUKESHA|
+        SHEBOYGAN|
+        CHICAGO|
+        PITTSBURGH|
+        BOULDER|
+        MINNEAPOLIS|
+        ORLANDO|
+        GREENDALE|
+        FRANKLIN|
+        SOUTH\ BEND|
+        LAKE\ BUENA\ VISTA
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+###############################################################################
+# CLEANUP
+###############################################################################
+
+def cleanup_description(description):
+
+    if pd.isna(description):
+        return ""
+
+    desc = str(description).upper()
+
+    desc = PROCESSOR_RE.sub("", desc)
+
+    desc = APPLE_PAY_RE.sub(" ", desc)
+
+    desc = PHONE_RE.sub(" ", desc)
+
+    desc = STORE_NUMBER_RE.sub(" ", desc)
+
+    desc = STATE_RE.sub(" ", desc)
+
+    desc = CITY_RE.sub(" ", desc)
+
+    desc = LONG_ID_RE.sub(" ", desc)
+
+    desc = re.sub(r"[^\w\s&'\.-]", " ", desc)
+
+    desc = re.sub(r"\s+", " ", desc)
+
+    return desc.strip()
+
+
+###############################################################################
+# LOOKUP
+###############################################################################
+
+def canonical_lookup(cleaned_desc, merchant_map):
+
+    for pattern, merchant in merchant_map:
+
+        if pattern.search(cleaned_desc):
+            return merchant
+
+    return cleaned_desc
+
+
+###############################################################################
+# MAIN NORMALIZATION
+###############################################################################
+
+def normalize_merchant(description, merchant_map):
+
+    cleaned_desc = cleanup_description(description)
+
+    merchant_clean = canonical_lookup(
+        cleaned_desc,
+        merchant_map
+    )
+
+    return merchant_clean
+
+
+###############################################################################
+# CSV PROCESSING
+###############################################################################
+
+def normalize_csv(
+    input_csv,
+    output_csv,
+    merchant_map_csv="merchant_map.csv"
+):
+
+    merchant_map = load_merchant_map(
+        merchant_map_csv
+    )
+
+    df = pd.read_csv(input_csv)
 
     df["merchant_clean"] = (
-        df["merchant_candidate"]
-        .map(mapping)
+        df["description"]
+        .fillna("")
+        .apply(
+            lambda x:
+            normalize_merchant(
+                x,
+                merchant_map
+            )
+        )
+    )
+
+    df.to_csv(
+        output_csv,
+        index=False
+    )
+
+    print(f"Output saved: {output_csv}")
+    print(
+        f"Unique merchants: "
+        f"{df['merchant_clean'].nunique():,}"
     )
 
     return df
 
 
-# =====================================================
-# Main Pipeline
-# =====================================================
+###############################################################################
+# EXAMPLE
+###############################################################################
 
-def extract_merchants(
-    df,
-    custom_stopwords=None,
-    fuzzy_threshold=92
-):
-    """
-    Full merchant extraction workflow.
+if __name__ == "__main__":
 
-    Description
-       ↓
-    TF-IDF
-       ↓
-    Top Tokens
-       ↓
-    Ordered Candidate
-       ↓
-    Fuzzy Merge
-       ↓
-    merchant_clean
-    """
-
-    df = assign_merchant_candidates(
-        df,
-        custom_stopwords
+    normalize_csv(
+        input_csv="unique_descriptions.csv",
+        output_csv="merchant_normalized.csv",
+        merchant_map_csv="merchant_map.csv"
     )
-
-    df = merge_candidate_names(
-        df,
-        threshold=fuzzy_threshold
-    )
-
-    return df
